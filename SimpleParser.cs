@@ -1,35 +1,22 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Text.RegularExpressions;
-using XiaWorld;
 
 namespace FunctionalPatches.SimpleParser
 {
+    public class InvalidSyntaxException : Exception
+    {
+        public InvalidSyntaxException() { }
+        public InvalidSyntaxException(string message) : base(message) { }
+    }
     public class SimpleParser<T> where T : EventArgs
     {
-        public delegate MemberExpression ExpBuilder(ParameterExpression param);
-
-        public static Dictionary<string, ExpBuilder> unitBuilder;
-        public static Dictionary<string, Type> enumTypes;
-        public static Dictionary<string, int> precedence;
-
-        static SimpleParser()
+        public LanguageTable Table { get; private set; }
+        public SimpleParser()
         {
-            unitBuilder = new Dictionary<string, ExpBuilder>();
-            unitBuilder["To"] = BuildTo;
-            unitBuilder["From"] = BuildFrom;
-            unitBuilder["Element"] = BuildElement;
-            unitBuilder["Source"] = BuildSource;
-
-            enumTypes = new Dictionary<string, Type>();
-            enumTypes["Element"] = typeof(g_emElementKind);
-            enumTypes["Source"] = typeof(g_emDamageSource);
-
-            precedence = new Dictionary<string, int>();
-            precedence["!"] = 2;
-            precedence["&"] = 1;
-            precedence["|"] = 1;
+            Table = new LanguageTable();
         }
 
         public Func<T,bool> Parse(string exp)
@@ -38,21 +25,16 @@ namespace FunctionalPatches.SimpleParser
             var space_pattern = new Regex(@"\s+", RegexOptions.Compiled);
             var slim_exp = space_pattern.Replace(exp, "");
             // then we tokenize the slim string.
-            var tokens = new SimpleTokenizer().Tokenize(slim_exp);
+            var tokens = new SimpleTokenizer(Table).Tokenize(slim_exp);
             // then we construct the parameter expression.
             var param = Expression.Parameter(typeof(T), "e");
-            // then we construct the nodes.
-            var expression = ParseTree(tokens, param);
+            // then we construct the expression body.
+            var queue = ShuntingYard(tokens);
+            var expression = ConstructBody(queue, param);
             // then we construct the lambda.
             var lambda = Expression.Lambda<Func<T, bool>>(expression, param);
             // finally, we return the compiled delegate.
             return lambda.Compile();
-        }
-
-        private Expression ParseTree(IEnumerable<string> tokens, ParameterExpression param)
-        {
-            var queue = ShuntingYard(tokens);
-            return ConstructBody(queue, param);
         }
 
         // the shunting yard algorithm that transforms the expression into a queue that's useful.
@@ -80,13 +62,13 @@ namespace FunctionalPatches.SimpleParser
                     ops.Pop();
                 }
                 // if we encountered the operators.
-                else if (precedence.ContainsKey(current))
+                else if (Table.Operators.ContainsKey(current))
                 {
                     // while there is still an operator at the top of the ops stack.
                     // we pop the operator from the ops stack to the output queue only if:
                     // 1. the operator is not an open parenthesis.
                     // 2. the operator at the top of the stack has higher precedence.
-                    while (ops.Count > 0 && ops.Peek() != "(" && precedence[ops.Peek()] > precedence[current])
+                    while (ops.Count > 0 && ops.Peek() != "(" && Table.Operators[ops.Peek()].Precedence > Table.Operators[current].Precedence)
                     {
                        output.Enqueue(ops.Pop());
                     }
@@ -112,21 +94,11 @@ namespace FunctionalPatches.SimpleParser
             while(queue.Count > 0)
             {
                 var current = queue.Dequeue();
-                // if we get the unary operator, then we only pop one operand and construct the not expression from it.
-                if (current == "!")
+                // if we get an operator, we use the builder function stored in our language table to construct the expression, and push the expression back on top of the stack.
+                if (Table.Operators.ContainsKey(current))
                 {
-                    var exp = Expression.Not(exps.Pop());
-                    exps.Push(exp);
-                }
-                // not too much different than above, just popping two operands.
-                else if (current == "&")
-                {
-                    var exp = Expression.And(exps.Pop(), exps.Pop());
-                    exps.Push(exp);
-                }
-                else if (current == "|")
-                {
-                    var exp = Expression.Or(exps.Pop(), exps.Pop());
+                    var builder = Table.Operators[current].Builder;
+                    var exp = builder(exps);
                     exps.Push(exp);
                 }
                 //if the current item is a unit.
@@ -141,61 +113,48 @@ namespace FunctionalPatches.SimpleParser
 
         private Expression ParseUnit(string token, ParameterExpression param)
         {
-            var items = token.Split(new char[] { ':' });
-            var name = items[0]; // because I didn't remove empty entries, name is always going to be there.
-            var builder = unitBuilder[name];
-            if (builder == null) throw new ArgumentException($"the token '{token}' has an invalid name!");
-            var member = builder(param);
-            ConstantExpression const_exp = null;
-            if (items.Length > 1) // meaning that we can access the second item without error.
+            var items = token.Split(':');
+            // because I didn't remove empty entries, var is always going to be there.
+            var var = items[0];
+            if (string.IsNullOrEmpty(var)) throw new InvalidSyntaxException($"The token '{token}' has an empty member accessor!");
+            // the new grammar allows infinite layers of property or field accession using the dot operator. so we need to process that.
+            var accessors = var.Split('.');
+            try
             {
-                var constant = items[1];
-                // if there's actually anything.
-                if (!string.IsNullOrEmpty(constant))
+                var member_accessor = ParseAccessors(accessors, param);
+                var field = typeof(T).GetField(accessors[0]); // the first name in the accessors list is always going to be the field name of the EventArgs type, we need it for value conversion.
+                if (items.Length > 1) // meaning that we can access the second item without error.
                 {
-                    // if we can find the name in the enumTypes dictionary, then it means this constant must be an enum.
-                    if (enumTypes.ContainsKey(name))
+                    var constant = items[1];
+                    // we only parse if there's actually anything.
+                    if (!string.IsNullOrEmpty(constant))
                     {
-                        var enum_type = enumTypes[name];
-                        var value = Enum.Parse(enum_type, constant);
-                        const_exp = Expression.Constant(value);
-                    }
-                    // otherwise, it must be a number.
-                    else
-                    {
-                        var value = int.Parse(constant);
-                        const_exp = Expression.Constant(value);
+                        var converter = TypeDescriptor.GetConverter(field.FieldType);
+                        var value = converter.ConvertFromString(constant);
+                        var const_exp = Expression.Constant(value);
+                        return Expression.Equal(member_accessor, const_exp); // after all the parsing, we can return early if we get a constant expression, saving one branching operation.
                     }
                 }
+                // if there is no constant expression to evaluate for, we just return the member access expression to get the value (this happens when some member is a boolean already).
+                return member_accessor;
             }
-            // if there is no constant expression to evaluate for, we just return the member access expression to get the value (this happens when some member is a boolean already).
-            if (const_exp == null)
+            catch (InvalidSyntaxException)
             {
-                return member;
+                throw new InvalidSyntaxException($"the token '{token}' has an invalid member accessor (check your dots)!");
             }
-            // otherwise, we do the equality evaluation and return.
-            else
+        }
+        private Expression ParseAccessors(string[] accs, ParameterExpression param)
+        {
+            Expression prev_expression = param;
+            Expression current_expression = null;
+            for (int i = 0; i < accs.Length; i++)
             {
-                return Expression.Equal(member, const_exp);
+                var name = accs[i];
+                if (string.IsNullOrEmpty(name)) throw new InvalidSyntaxException();
+                current_expression = Expression.PropertyOrField(prev_expression, name);
+                prev_expression = current_expression;
             }
-        }
-        private static MemberExpression BuildTo(ParameterExpression param)
-        {
-            var target = Expression.Field(param, "Target"); // we access the Target field of our event arg e.
-            return Expression.Property(target, "ID");
-        }
-        private static MemberExpression BuildFrom(ParameterExpression param)
-        {
-            var from = Expression.Field(param, "From"); // we access the From field of our event arg e.
-            return Expression.Property(from, "ID");
-        }
-        private static MemberExpression BuildElement(ParameterExpression param)
-        {
-            return Expression.Field(param, "Element");
-        }
-        private static MemberExpression BuildSource(ParameterExpression param)
-        {
-            return Expression.Field(param, "Source");
+            return current_expression;
         }
     }
 }
