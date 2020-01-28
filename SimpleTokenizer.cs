@@ -11,7 +11,7 @@ namespace FunctionalPatches.SimpleParser
         public SimpleTokenizer(LanguageTable t)
         {
             Table = t;
-            var operators = t.Operators.Keys;
+            var operators = t.GetKeys();
             // we go the longway to manually loop over the collection to distinguish between single-character operators and multi-character operators.
             var single_char = "";
             var multi_char = "";

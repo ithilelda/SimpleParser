@@ -80,38 +80,25 @@ namespace FunctionalPatches.SimpleParser
                         if (ops.Count == 0) throw new InvalidSyntaxException("The parentheses don't match in the function call syntax.");
                         // however, we don't need to pop the open parenthesis at all, so we omit the line.
                     }
-                    // if we encountered a function, we just push it onto the stack.
-                    else if (Table.Functions.ContainsKey(current))
-                    {
-                        ops.Push(current);
-                    }
                     // if we encountered the operators.
-                    else if (Table.Operators.ContainsKey(current))
+                    else if (Table.CheckOperator(current))
                     {
                         // while there is still an operator at the top of the ops stack.
                         // we pop the operator from the ops stack to the output queue only if:
                         // 1. the operator at the top of the stack is not an open parenthesis. AND
-                        // 2. the top of the stack is a function.
-                        // 3. the operator at the top of the stack has higher precedence. OR
-                        // 4. this operator is left associative and the operator at the top of the stack has same precedence.
+                        // 2. the operator at the top of the stack has higher precedence. OR
+                        // 3. this operator is left associative and the operator at the top of the stack has same precedence.
                         while (ops.Count > 0)
                         {
                             var top = ops.Peek();
                             if (top == "(") break;
-                            if (Table.Functions.ContainsKey(top))
+                            var stack_op = Table.GetOperator(top);
+                            var current_op = Table.GetOperator(current);
+                            if ((current_op.IsLeftAssociative && stack_op.Precedence == current_op.Precedence) || stack_op.Precedence > current_op.Precedence)
                             {
                                 output.Enqueue(ops.Pop());
                             }
-                            else
-                            {
-                                var stack_op = Table.Operators[top];
-                                var current_op = Table.Operators[current];
-                                if ((current_op.IsLeftAssociative && stack_op.Precedence == current_op.Precedence) || stack_op.Precedence > current_op.Precedence)
-                                {
-                                    output.Enqueue(ops.Pop());
-                                }
-                                else break;
-                            }
+                            else break;
                         }
                         // after poping thing that matters, we push the current operator onto the stack.
                         // If anything went wrong above, we'll just let it throw exceptions and the program will later handle it.
@@ -140,17 +127,10 @@ namespace FunctionalPatches.SimpleParser
             {
                 var current = input.Dequeue();
                 KLog.Log(KLogLevel.Debug, $"The current queued token is: {current}");
-                // if we get a function, we call its build method, and push the resulting expression back onto the stack.
-                if (Table.Functions.ContainsKey(current))
-                {
-                    var func = Table.Functions[current];
-                    var exp = func.BuildExpression(exps);
-                    exps.Push(exp);
-                }
                 // if we get an operator, we use the builder function stored in our language table to construct the expression, and push the expression back on top of the stack.
-                else if (Table.Operators.ContainsKey(current))
+                if (Table.CheckOperator(current))
                 {
-                    var builder = Table.Operators[current].Builder;
+                    var builder = Table.GetOperator(current).Builder;
                     var exp = builder(exps);
                     exps.Push(exp);
                 }

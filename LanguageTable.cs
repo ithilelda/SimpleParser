@@ -7,8 +7,7 @@ namespace FunctionalPatches.SimpleParser
 {
     public class LanguageTable
     {
-        public Dictionary<string, Operator> Operators { get; private set; }
-        public Dictionary<string, Function> Functions = new Dictionary<string, Function>();
+        private Dictionary<string, Operator> Operators;
 
         public LanguageTable()
         {
@@ -26,7 +25,16 @@ namespace FunctionalPatches.SimpleParser
                 { "|", new Operator("|", 1, true, SimpleBinaryBuilderGenerator(Expression.OrElse)) },
             };
         }
-        private Func<Stack<StackNode>, StackNode> SimpleBinaryBuilderGenerator(Func<Expression, Expression, BinaryExpression> builder)
+
+        // the public interfaces for operator accessions.
+        public Operator GetOperator(string key) => Operators[key];
+        public bool CheckOperator(string key) => Operators.ContainsKey(key);
+        public void AddOperator(string key, Operator op) => Operators.Add(key, op);
+        public IEnumerable<string> GetKeys() => Operators.Keys;
+
+
+        // the factory methods for constructing the StackNodeBuilder delegate that's needed to construct expressions.
+        public static StackNodeBuilder SimpleBinaryBuilderGenerator(Func<Expression, Expression, BinaryExpression> builder)
         {
             return exps =>
             {
@@ -35,7 +43,7 @@ namespace FunctionalPatches.SimpleParser
                 return new StackNode { Exp = builder(left_op, right_op) };
             };
         }
-        private StackNode BuildAccessor(Stack<StackNode> exps)
+        public static StackNode BuildAccessor(Stack<StackNode> exps)
         {
             // a colon operator always have two operands, so we just pop twice. If any exceptions are thrown (ie stack not enough), we just propagate up and not deal with it.
             var right_op = exps.Pop();
@@ -59,7 +67,7 @@ namespace FunctionalPatches.SimpleParser
             }
             else throw new InvalidSyntaxException($"the type {type.AssemblyQualifiedName} does not contain either a property or a field named {member_name}!");
         }
-        private Func<Stack<StackNode>, StackNode> ComparisonBuilderGenerator(Func<Expression,Expression,BinaryExpression> builder)
+        public static StackNodeBuilder ComparisonBuilderGenerator(Func<Expression,Expression,BinaryExpression> builder)
         {
             return exps =>
             {
