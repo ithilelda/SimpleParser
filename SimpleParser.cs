@@ -122,7 +122,7 @@ namespace FunctionalPatches.SimpleParser
         }
         private Expression ConstructBody(Queue<string> input)
         {
-            var exps = new Stack<StackNode>();
+            var exps = new Stack<object>();
             while(input.Count > 0)
             {
                 var current = input.Dequeue();
@@ -138,17 +138,16 @@ namespace FunctionalPatches.SimpleParser
                 else if (current.StartsWith("$"))
                 {
                     var name = current.Substring(1);
-                    var type = typeof(T).GetField(name).FieldType.AssemblyQualifiedName;
                     var exp = Expression.Field(Param, name);
-                    exps.Push(new StackNode { Raw = type, Exp = exp });
+                    exps.Push(exp);
                 }
-                //if the current item is a unit, we push it verbatim onto the stack as the Raw field of StackNode.
+                //if the current item is a unit, we push it verbatim onto the stack as a raw string.
                 else
                 {
-                    exps.Push(new StackNode { Raw = current });
+                    exps.Push(current);
                 }
             }
-            return exps.Pop().Exp;
+            return exps.Pop() as Expression;
         }
     }
 }

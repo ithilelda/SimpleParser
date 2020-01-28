@@ -20,7 +20,7 @@ namespace FunctionalPatches.SimpleParser
                 { "<", new Operator("<", 3, true, ComparisonBuilderGenerator(Expression.LessThan)) },
                 { "==", new Operator("==", 3, true, ComparisonBuilderGenerator(Expression.Equal)) },
                 { "!=", new Operator("!=", 3, true, ComparisonBuilderGenerator(Expression.NotEqual)) },
-                { "!", new Operator("!", 2, true, exps => new StackNode { Exp = Expression.Not(exps.Pop().Exp) }) },
+                { "!", new Operator("!", 2, true, exps => Expression.Not((Expression)exps.Pop())) },
                 { "&", new Operator("&", 1, true, SimpleBinaryBuilderGenerator(Expression.AndAlso)) },
                 { "|", new Operator("|", 1, true, SimpleBinaryBuilderGenerator(Expression.OrElse)) },
             };
@@ -34,79 +34,82 @@ namespace FunctionalPatches.SimpleParser
 
 
         // the factory methods for constructing the StackNodeBuilder delegate that's needed to construct expressions.
-        public static StackNodeBuilder SimpleBinaryBuilderGenerator(Func<Expression, Expression, BinaryExpression> builder)
+        public static Expression BuildAccessor(Stack<object> exps)
         {
-            return exps =>
-            {
-                var right_op = exps.Pop().Exp;
-                var left_op = exps.Pop().Exp;
-                return new StackNode { Exp = builder(left_op, right_op) };
-            };
-        }
-        public static StackNode BuildAccessor(Stack<StackNode> exps)
-        {
-            // a colon operator always have two operands, so we just pop twice. If any exceptions are thrown (ie stack not enough), we just propagate up and not deal with it.
+            // an access operator always have two operands, so we just pop twice. If any exceptions are thrown (ie stack not enough), we just propagate up and not deal with it.
             var right_op = exps.Pop();
             var left_op = exps.Pop();
-            // if the right operand is not a raw string, we got a problem.
-            if (right_op.Exp != null || string.IsNullOrEmpty(right_op.Raw)) throw new InvalidSyntaxException("The right operrand of the access operator cannot be an expression!");
-            if (left_op.Exp == null) throw new InvalidSyntaxException("The left operand of the access operator must be an expression!");
-            Type type = Type.GetType(left_op.Raw); // the raw string of the left operand is where the assembly qualified type name is stored.
-            string member_name = right_op.Raw;
-            var property = type.GetProperty(member_name);
-            var field = type.GetField(member_name);
+            // if the right operand is not a raw string or the left operand is not an expression, we got a problem.
+            if (!(right_op is string)) throw new InvalidSyntaxException("The right operrand of the access operator must be a string indicating the field/property name!");
+            if (!(left_op is Expression)) throw new InvalidSyntaxException("The left operand of the access operator must be an expression!");
+            var parent_exp = left_op as Expression;
+            var parent_type = parent_exp.Type;
+            var member_name = right_op as string;
+            var property = parent_type.GetProperty(member_name);
+            var field = parent_type.GetField(member_name);
             if (property != null) // we prioritize the accession of properties.
             {
-                var full_name = property.PropertyType.AssemblyQualifiedName;
-                return new StackNode { Raw = full_name, Exp = Expression.Property(left_op.Exp, member_name) };
+                return Expression.Property(parent_exp, member_name);
             }
             else if (field != null)
             {
-                var full_name = field.FieldType.AssemblyQualifiedName;
-                return new StackNode { Raw = full_name, Exp = Expression.Field(left_op.Exp, member_name) };
+                return Expression.Field(parent_exp, member_name);
             }
-            else throw new InvalidSyntaxException($"the type {type.AssemblyQualifiedName} does not contain either a property or a field named {member_name}!");
+            else throw new InvalidSyntaxException($"the type {parent_type.AssemblyQualifiedName} does not contain either a property or a field named {member_name}!");
         }
-        public static StackNodeBuilder ComparisonBuilderGenerator(Func<Expression,Expression,BinaryExpression> builder)
+        public static ExpressionBuilder SimpleBinaryBuilderGenerator(Func<Expression, Expression, Expression> builder)
+        {
+            return exps =>
+            {
+                var right_op = (Expression)exps.Pop();
+                var left_op = (Expression)exps.Pop();
+                return builder(left_op, right_op);
+            };
+        }
+        public static ExpressionBuilder ComparisonBuilderGenerator(Func<Expression,Expression,BinaryExpression> builder)
         {
             return exps =>
             {
                 var right_op = exps.Pop();
                 var left_op = exps.Pop();
-                if (left_op.Exp == null && right_op.Exp == null) throw new InvalidSyntaxException("comparison operator requires at least one expression!"); // one of the operands must be an expression.
+                if (!(left_op is Expression) && !(right_op is Expression)) throw new InvalidSyntaxException("comparison operator requires at least one expression!");
                 Expression left_exp, right_exp;
                 // if the lefthandside is a string literal, we need to construct a constant expression from the type info of the right expression.
-                if (left_op.Exp == null)
+                if (left_op is string)
                 {
                     object value = null;
-                    var type = Type.GetType(right_op.Raw);
-                    if (left_op.Raw != "null")
+                    right_exp = right_op as Expression;
+                    var constant = left_op as string;
+                    var type = right_exp.Type;
+                    if (constant != "null")
                     {
                         var converter = TypeDescriptor.GetConverter(type);
-                        value = converter.ConvertFromString(left_op.Raw);
+                        value = converter.ConvertFromString(constant);
                     }
                     left_exp = Expression.Constant(value, type);
-                    right_exp = right_op.Exp;
                 }
                 // if the righthandside is a string literal, we need to construct a constant expression from the type info of the left expression.
-                else if (right_op.Exp == null)
+                else if (right_op is string)
                 {
                     object value = null;
-                    var type = Type.GetType(left_op.Raw);
-                    if (right_op.Raw != "null")
+                    left_exp = left_op as Expression;
+                    var constant = right_op as string;
+                    var type = left_exp.Type;
+                    if (constant != "null")
                     {
                         var converter = TypeDescriptor.GetConverter(type);
-                        value = converter.ConvertFromString(right_op.Raw);
+                        value = converter.ConvertFromString(constant);
                     }
                     right_exp = Expression.Constant(value, type);
-                    left_exp = left_op.Exp;
+
                 }
-                else // if both operands are expressions, we just make a new comparison expression from them.
+                else if (left_op is Expression && right_op is Expression)// if both operands are expressions, we just make a new comparison expression from them.
                 {
-                    left_exp = left_op.Exp;
-                    right_exp = right_op.Exp;
+                    left_exp = left_op as Expression;
+                    right_exp = right_op as Expression;
                 }
-                return new StackNode { Exp = builder(left_exp, right_exp) };
+                else throw new InvalidSyntaxException("The Evaluation Stack has types other than Expression or string, check your program!");
+                return builder(left_exp, right_exp);
             };
         }
     }
