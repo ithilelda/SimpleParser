@@ -4,11 +4,11 @@ using System.Text.RegularExpressions;
 
 namespace FunctionalPatches.SimpleParser
 {
-    public class SimpleTokenizer<T> where T : EventArgs
+    public class SimpleTokenizer
     {
-        public LanguageTable<T> Table { get; private set; }
+        public LanguageTable Table { get; private set; }
         public Regex RegexPattern { get; private set; }
-        public SimpleTokenizer(LanguageTable<T> t)
+        public SimpleTokenizer(LanguageTable t)
         {
             Table = t;
             var operators = t.Operators.Keys;
@@ -29,7 +29,7 @@ namespace FunctionalPatches.SimpleParser
             }
             // we need to escape all the special characters because we want to match our operators literally.
             var single_ops = Regex.Escape(single_char);
-            var pattern = $@"({multi_char}[{single_ops}\(\)])";
+            var pattern = $@"({multi_char}[{single_ops}\(\),])";
             //KLog.Log(KLogLevel.Debug, $"The pattern string is: {pattern}");
             RegexPattern = new Regex(pattern, RegexOptions.Compiled);
         }

@@ -5,26 +5,34 @@ using System.Linq.Expressions;
 
 namespace FunctionalPatches.SimpleParser
 {
-    public class LanguageTable<T> where T : EventArgs
+    public class LanguageTable
     {
         public Dictionary<string, Operator> Operators { get; private set; }
-        public ParameterExpression Param { get; private set; }
+        public Dictionary<string, Function> Functions = new Dictionary<string, Function>();
 
-        public LanguageTable(ParameterExpression param)
+        public LanguageTable()
         {
-            Param = param;
             Operators = new Dictionary<string, Operator>()
             {
-                { ":", new Operator(":", 5, true, BuildAccessor)},
+                { ":", new Operator("accessor", 5, true, BuildAccessor)},
                 { ">=", new Operator(">=", 3, true, ComparisonBuilderGenerator(Expression.GreaterThanOrEqual)) },
                 { "<=", new Operator("<=", 3, true, ComparisonBuilderGenerator(Expression.LessThanOrEqual)) },
                 { ">", new Operator(">", 3, true, ComparisonBuilderGenerator(Expression.GreaterThan)) },
                 { "<", new Operator("<", 3, true, ComparisonBuilderGenerator(Expression.LessThan)) },
                 { "==", new Operator("==", 3, true, ComparisonBuilderGenerator(Expression.Equal)) },
                 { "!=", new Operator("!=", 3, true, ComparisonBuilderGenerator(Expression.NotEqual)) },
-                { "!", new Operator("!", 2, false, exps => new StackNode { Exp = Expression.Not(exps.Pop().Exp) }) },
-                { "&", new Operator("&", 1, false, exps => new StackNode { Exp = Expression.And(exps.Pop().Exp, exps.Pop().Exp) }) },
-                { "|", new Operator("|", 1, false, exps => new StackNode { Exp = Expression.Or(exps.Pop().Exp, exps.Pop().Exp) }) },
+                { "!", new Operator("!", 2, true, exps => new StackNode { Exp = Expression.Not(exps.Pop().Exp) }) },
+                { "&", new Operator("&", 1, true, SimpleBinaryBuilderGenerator(Expression.AndAlso)) },
+                { "|", new Operator("|", 1, true, SimpleBinaryBuilderGenerator(Expression.OrElse)) },
+            };
+        }
+        private Func<Stack<StackNode>, StackNode> SimpleBinaryBuilderGenerator(Func<Expression, Expression, BinaryExpression> builder)
+        {
+            return exps =>
+            {
+                var right_op = exps.Pop().Exp;
+                var left_op = exps.Pop().Exp;
+                return new StackNode { Exp = builder(left_op, right_op) };
             };
         }
         private StackNode BuildAccessor(Stack<StackNode> exps)
@@ -58,30 +66,39 @@ namespace FunctionalPatches.SimpleParser
                 var right_op = exps.Pop();
                 var left_op = exps.Pop();
                 if (left_op.Exp == null && right_op.Exp == null) throw new InvalidSyntaxException("comparison operator requires at least one expression!"); // one of the operands must be an expression.
-                Expression comp_exp;
+                Expression left_exp, right_exp;
                 // if the lefthandside is a string literal, we need to construct a constant expression from the type info of the right expression.
                 if (left_op.Exp == null)
                 {
+                    object value = null;
                     var type = Type.GetType(right_op.Raw);
-                    var converter = TypeDescriptor.GetConverter(type);
-                    var value = converter.ConvertFromString(left_op.Raw);
-                    var const_exp = Expression.Constant(value);
-                    comp_exp = builder(const_exp, right_op.Exp);
+                    if (left_op.Raw != "null")
+                    {
+                        var converter = TypeDescriptor.GetConverter(type);
+                        value = converter.ConvertFromString(left_op.Raw);
+                    }
+                    left_exp = Expression.Constant(value, type);
+                    right_exp = right_op.Exp;
                 }
                 // if the righthandside is a string literal, we need to construct a constant expression from the type info of the left expression.
                 else if (right_op.Exp == null)
                 {
+                    object value = null;
                     var type = Type.GetType(left_op.Raw);
-                    var converter = TypeDescriptor.GetConverter(type);
-                    var value = converter.ConvertFromString(right_op.Raw);
-                    var const_exp = Expression.Constant(value);
-                    comp_exp = builder(left_op.Exp, const_exp);
+                    if (right_op.Raw != "null")
+                    {
+                        var converter = TypeDescriptor.GetConverter(type);
+                        value = converter.ConvertFromString(right_op.Raw);
+                    }
+                    right_exp = Expression.Constant(value, type);
+                    left_exp = left_op.Exp;
                 }
                 else // if both operands are expressions, we just make a new comparison expression from them.
                 {
-                    comp_exp = builder(left_op.Exp, right_op.Exp);
+                    left_exp = left_op.Exp;
+                    right_exp = right_op.Exp;
                 }
-                return new StackNode { Exp = comp_exp };
+                return new StackNode { Exp = builder(left_exp, right_exp) };
             };
         }
     }

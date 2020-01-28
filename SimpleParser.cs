@@ -5,16 +5,20 @@ using System.Text.RegularExpressions;
 
 namespace FunctionalPatches.SimpleParser
 {
-    public class SimpleParser<T> where T : EventArgs
+    public abstract class Parser
+    {
+
+    }
+    public class SimpleParser<T> : Parser where T : EventArgs
     {
         public ParameterExpression Param { get; private set; }
-        public LanguageTable<T> Table { get; private set; }
-        public SimpleTokenizer<T> Tokenizer { get; private set; }
-        public SimpleParser()
+        public LanguageTable Table { get; private set; }
+        public SimpleTokenizer Tokenizer { get; private set; }
+        public SimpleParser(LanguageTable table)
         {
             Param = Expression.Parameter(typeof(T), "e");
-            Table = new LanguageTable<T>(Param);
-            Tokenizer = new SimpleTokenizer<T>(Table);
+            Table = table;
+            Tokenizer = new SimpleTokenizer(table);
         } 
 
         public Func<T,bool> Parse(string exp)
@@ -45,6 +49,7 @@ namespace FunctionalPatches.SimpleParser
                 var current = iter.Current;
                 if (!string.IsNullOrEmpty(current))
                 {
+                    KLog.Log(KLogLevel.Debug, $"The current token is: {current}");
                     // if we encountered an open parenthesis, we simply push it onto the ops stack.
                     if (current == "(")
                     {
@@ -53,30 +58,60 @@ namespace FunctionalPatches.SimpleParser
                     // if we encountered a close parenthesis, we pop every operator from the stack until we find an open parenthesis.
                     else if (current == ")")
                     {
-                        while (ops.Peek() != "(")
+                        while (ops.Count > 0 && ops.Peek() != "(")
                         {
                             output.Enqueue(ops.Pop());
                         }
+                        // if we cannot find an open parenthesis after all the stack empties, we throw the invalid syntax exception with a clear message.
+                        if (ops.Count == 0) throw new InvalidSyntaxException("The parentheses don't match.");
                         // if pop and peek doesn't throw an exception, we have successfully found an open parenthesis before the stack empties. So we discard the open parenthesis.
                         ops.Pop();
+                    }
+                    // if we encountered the argument separate operator comma (,), we have to deal with it differently.
+                    // we will have to pop every operator from the stack until we found an open parenthesis.
+                    else if (current == ",")
+                    {
+                        // we basically do the same thing as the close parenthesis.
+                        while (ops.Count > 0 && ops.Peek() != "(")
+                        {
+                            output.Enqueue(ops.Pop());
+                        }
+                        // if we cannot find an open parenthesis after all the stack empties, we throw the invalid syntax exception with a clear message.
+                        if (ops.Count == 0) throw new InvalidSyntaxException("The parentheses don't match in the function call syntax.");
+                        // however, we don't need to pop the open parenthesis at all, so we omit the line.
+                    }
+                    // if we encountered a function, we just push it onto the stack.
+                    else if (Table.Functions.ContainsKey(current))
+                    {
+                        ops.Push(current);
                     }
                     // if we encountered the operators.
                     else if (Table.Operators.ContainsKey(current))
                     {
                         // while there is still an operator at the top of the ops stack.
                         // we pop the operator from the ops stack to the output queue only if:
-                        // 1. the operator is not an open parenthesis.
-                        // 2. the operator at the top of the stack has higher precedence.
-                        // 3. this operator is left associative and the operator at the top of the stack has same precedence.
-                        while (ops.Count > 0 && ops.Peek() != "(")
+                        // 1. the operator at the top of the stack is not an open parenthesis. AND
+                        // 2. the top of the stack is a function.
+                        // 3. the operator at the top of the stack has higher precedence. OR
+                        // 4. this operator is left associative and the operator at the top of the stack has same precedence.
+                        while (ops.Count > 0)
                         {
-                            var stack_op = Table.Operators[ops.Peek()];
-                            var current_op = Table.Operators[current];
-                            if ((current_op.IsLeftAssociative && stack_op.Precedence == current_op.Precedence) || stack_op.Precedence > current_op.Precedence)
+                            var top = ops.Peek();
+                            if (top == "(") break;
+                            if (Table.Functions.ContainsKey(top))
                             {
                                 output.Enqueue(ops.Pop());
                             }
-                            else break; // we only perform the action if the condition is true. If we find an operator that doesn't meet the criteria, we stop and break the loop.
+                            else
+                            {
+                                var stack_op = Table.Operators[top];
+                                var current_op = Table.Operators[current];
+                                if ((current_op.IsLeftAssociative && stack_op.Precedence == current_op.Precedence) || stack_op.Precedence > current_op.Precedence)
+                                {
+                                    output.Enqueue(ops.Pop());
+                                }
+                                else break;
+                            }
                         }
                         // after poping thing that matters, we push the current operator onto the stack.
                         // If anything went wrong above, we'll just let it throw exceptions and the program will later handle it.
@@ -92,7 +127,9 @@ namespace FunctionalPatches.SimpleParser
             // finally, we pop everything that's left in the stack to the output queue.
             while(ops.Count > 0)
             {
-                output.Enqueue(ops.Pop());
+                var op = ops.Pop();
+                if (op == "(") throw new InvalidSyntaxException("The parentheses don't match.");
+                output.Enqueue(op);
             }
             return output;
         }
@@ -103,8 +140,15 @@ namespace FunctionalPatches.SimpleParser
             {
                 var current = input.Dequeue();
                 KLog.Log(KLogLevel.Debug, $"The current queued token is: {current}");
+                // if we get a function, we call its build method, and push the resulting expression back onto the stack.
+                if (Table.Functions.ContainsKey(current))
+                {
+                    var func = Table.Functions[current];
+                    var exp = func.BuildExpression(exps);
+                    exps.Push(exp);
+                }
                 // if we get an operator, we use the builder function stored in our language table to construct the expression, and push the expression back on top of the stack.
-                if (Table.Operators.ContainsKey(current))
+                else if (Table.Operators.ContainsKey(current))
                 {
                     var builder = Table.Operators[current].Builder;
                     var exp = builder(exps);
