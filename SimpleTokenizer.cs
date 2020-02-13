@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace FunctionalPatches.SimpleParser
+namespace SimpleParser
 {
     public class SimpleTokenizer
     {

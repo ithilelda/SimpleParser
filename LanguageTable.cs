@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq.Expressions;
 
-namespace FunctionalPatches.SimpleParser
+namespace SimpleParser
 {
     public class LanguageTable
     {

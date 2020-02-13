@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Text.RegularExpressions;
 
-namespace FunctionalPatches.SimpleParser
+namespace SimpleParser
 {
     public abstract class Parser
     {
@@ -49,7 +49,6 @@ namespace FunctionalPatches.SimpleParser
                 var current = iter.Current;
                 if (!string.IsNullOrEmpty(current))
                 {
-                    KLog.Log(KLogLevel.Debug, $"The current token is: {current}");
                     // if we encountered an open parenthesis, we simply push it onto the ops stack.
                     if (current == "(")
                     {
@@ -126,7 +125,6 @@ namespace FunctionalPatches.SimpleParser
             while(input.Count > 0)
             {
                 var current = input.Dequeue();
-                KLog.Log(KLogLevel.Debug, $"The current queued token is: {current}");
                 // if we get an operator, we use the builder function stored in our language table to construct the expression, and push the expression back on top of the stack.
                 if (Table.CheckOperator(current))
                 {
