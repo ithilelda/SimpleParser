@@ -21,8 +21,8 @@ namespace SimpleParser
             Builder = builder;
         }
 
-        // the factory method for constructing StackNodeBuilder delegate for functions.
-        public static ExpressionBuilder FunctionStackNodeBuilderGenerator(Func<Expression[], Expression> func, int parcount, params Type[] partypes)
+        // the factory method for constructing ExpressionBuilder delegate for functions.
+        public static ExpressionBuilder FunctionExpressionBuilderGenerator(Func<Expression[], Expression> func, int parcount, params Type[] partypes)
         {
             return exps =>
             {
