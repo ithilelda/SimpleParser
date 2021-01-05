@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq.Expressions;
 
-namespace FunctionalPatches.SimpleParser
+namespace SimpleParser
 {
     public delegate Expression ExpressionBuilder(Stack<object> stack);
     public class Operator
@@ -22,7 +22,7 @@ namespace FunctionalPatches.SimpleParser
         }
 
         // the factory method for constructing StackNodeBuilder delegate for functions.
-        public static ExpressionBuilder FunctionStackNodeBuilderGenerator(Func<Expression[], Expression> func, int parcount, params Type[] partypes)
+        public static ExpressionBuilder FunctionExpressionBuilderGenerator(Func<Expression[], Expression> func, int parcount, params Type[] partypes)
         {
             return exps =>
             {
@@ -37,7 +37,7 @@ namespace FunctionalPatches.SimpleParser
                     {
                         var cur_exp = cur_stack as Expression;
                         var type = cur_exp.Type;
-                        if (type != partypes[i]) throw new InvalidSyntaxException($"The type of your {i}th paramter is not {partypes[i]}!");
+                        if (type != partypes[i]) throw new InvalidSyntaxException($"The type of your {i+1}th paramter is not {partypes[i]}!");
                         param[i] = cur_exp;
                     }
                     // otherwise, we need to convert and construct a constant expression.
